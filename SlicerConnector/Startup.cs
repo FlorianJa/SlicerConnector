@@ -62,7 +62,13 @@ namespace SlicerConnector
             MeshesPath = Path.Combine(BasePath, "Meshes");
 
             if (!File.Exists(slicerPath))
+            {
+                string msg = "The slicer application was not found in the indicated place. \n " +
+                             "Consider checking if the application instance exits in the same path you provided in the 'appsettings.json' file. \n";
+                Console.WriteLine(msg);
                 throw new FileNotFoundException("The slicer application is not found in the given path");
+            }
+                
 
             if (!Directory.Exists(ModelDownloadPath))
                 Directory.CreateDirectory(ModelDownloadPath);
@@ -225,55 +231,76 @@ namespace SlicerConnector
 
             while (!result.CloseStatus.HasValue)
             {
-                var receivedAsJson = Encoding.ASCII.GetString(buffer, 0, result.Count);
-
-                //convert json to object
-                PrusaSlicerCLICommands commands = JsonSerializer.Deserialize<PrusaSlicerCLICommands>(receivedAsJson, new JsonSerializerOptions() { IgnoreNullValues = true });
-                commands.Output = GCodePath;
-                if (!Directory.Exists(commands.Output))
+                try
                 {
-                    Directory.CreateDirectory(commands.Output);
-                }
-                if (commands.isValid())
-                {
-                    var prusaSlicerBroker = new PrusaSlicerBroker(slicerPath);
-                    prusaSlicerBroker.FileSliced += PrusaSlicerBroker_FileSliced(webSocket);
+                    var receivedAsJson = Encoding.ASCII.GetString(buffer, 0, result.Count);
 
-                    prusaSlicerBroker.DataReceived += async (sender, args) =>
+                    //convert json to object
+                    PrusaSlicerCLICommands commands = JsonSerializer.Deserialize<PrusaSlicerCLICommands>(receivedAsJson,
+                        new JsonSerializerOptions() {IgnoreNullValues = true});
+                    commands.Output = GCodePath;
+                    if (!Directory.Exists(commands.Output))
                     {
-                        var slicingProgressMessage = new SlicingProgressMessage(args.Data).ToString();
-                        var slicingProgressMessageBytes = Encoding.ASCII.GetBytes(slicingProgressMessage);
-                        await webSocket.SendAsync(new ArraySegment<byte>(slicingProgressMessageBytes, 0, slicingProgressMessage.Length), WebSocketMessageType.Text, true, CancellationToken.None);
-                    };
+                        Directory.CreateDirectory(commands.Output);
+                    }
 
-                    var localPath = Path.Combine(ModelDownloadPath, commands.File);
-                    if (await CheckForFileDifference(localPath, commands.File))
+                    if (commands.isValid())
                     {
-                        var res = await os.FileOperations.DownloadFileAsync("local" , commands.File, localPath);
+                        var prusaSlicerBroker = new PrusaSlicerBroker(slicerPath);
+                        prusaSlicerBroker.FileSliced += PrusaSlicerBroker_FileSliced(webSocket);
 
-                        //downloading failed
-                        if (!res)
+                        prusaSlicerBroker.DataReceived += async (sender, args) =>
                         {
-                            var error = new ErrorMessage($"The requested file ({commands.File}) was not found on Octoprint").ToString();
-                            var errorBytes = Encoding.ASCII.GetBytes(error);
-                            await webSocket.SendAsync(new ArraySegment<byte>(errorBytes, 0, error.Length), WebSocketMessageType.Text, true, CancellationToken.None);
+                            var slicingProgressMessage = new SlicingProgressMessage(args.Data).ToString();
+                            var slicingProgressMessageBytes = Encoding.ASCII.GetBytes(slicingProgressMessage);
+                            await webSocket.SendAsync(
+                                new ArraySegment<byte>(slicingProgressMessageBytes, 0, slicingProgressMessage.Length),
+                                WebSocketMessageType.Text, true, CancellationToken.None);
+                        };
+
+                        var localPath = Path.Combine(ModelDownloadPath, commands.File);
+                        if (await CheckForFileDifference(localPath, commands.File))
+                        {
+                            var res = await os.FileOperations.DownloadFileAsync("local", commands.File, localPath);
+
+                            //downloading failed
+                            if (!res)
+                            {
+                                var error = new ErrorMessage(
+                                    $"The requested file ({commands.File}) was not found on Octoprint").ToString();
+                                var errorBytes = Encoding.ASCII.GetBytes(error);
+                                await webSocket.SendAsync(new ArraySegment<byte>(errorBytes, 0, error.Length),
+                                    WebSocketMessageType.Text, true, CancellationToken.None);
+                            }
+                            else
+                            {
+                                commands.File = localPath;
+                                await prusaSlicerBroker.SliceAsync(commands);
+                            }
+
                         }
+                        // use the local file on the disk
                         else
                         {
                             commands.File = localPath;
                             await prusaSlicerBroker.SliceAsync(commands);
                         }
+                    }
 
-                    }
-                    // use the local file on the disk
-                    else
-                    {
-                        commands.File = localPath;
-                        await prusaSlicerBroker.SliceAsync(commands);
-                    }
+                    result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
                 }
+                catch (JsonException)
+                {
+                    string msg =
+                        "The application was terminated because an incoming message from the web socket was not in proper Json format " +
+                        "Check that the websocket messages are in correct json format \n";
 
-                result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+                    Console.WriteLine(msg);
+                    await webSocket.CloseAsync(result.CloseStatus.Value, result.CloseStatusDescription, CancellationToken.None);
+                    throw;
+                }
+                
+
             }
 
             await webSocket.CloseAsync(result.CloseStatus.Value, result.CloseStatusDescription, CancellationToken.None);

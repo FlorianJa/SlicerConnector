@@ -13,7 +13,17 @@ namespace SlicerConnector
     {
         public static void Main(string[] args)
         {
-            CreateHostBuilder(args).Build().Run();
+            try
+            {
+                CreateHostBuilder(args).Build().Run();
+            }
+            catch (FormatException e)
+            {
+                string msg = "Application failed to start because there was a format error in one of the startup configurations." +
+                             "Most probably the appsettings.json file is not in the correct format";
+                Console.WriteLine(msg);
+                throw;
+            }
         }
 
         public static IHostBuilder CreateHostBuilder(string[] args) =>

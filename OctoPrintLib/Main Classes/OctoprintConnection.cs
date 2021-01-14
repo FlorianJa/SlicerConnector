@@ -65,25 +65,43 @@ namespace OctoPrintLib
         /// <param name="arguments">The Newtonsoft Jobject to post tp the address</param>
         protected string PostJson(string location, JObject arguments)
         {
-            string strResponseValue = string.Empty;
-            String argumentString = string.Empty;
-            argumentString = JsonConvert.SerializeObject(arguments);
-            HttpWebRequest request = WebRequest.CreateHttp("http://" + server.DomainNmaeOrIp +"/"+ location);// + "?apikey=" + apiKey);
-            request.Method = "POST";
-            request.Headers["X-Api-Key"] = server.ApplicationKey;
-            request.ContentType = "application/json";
-            using (var streamWriter = new StreamWriter(request.GetRequestStream()))
+            try
             {
-                streamWriter.Write(argumentString);
-            }
-            HttpWebResponse httpResponse;
-            httpResponse = (HttpWebResponse)request.GetResponse();
+                string strResponseValue = string.Empty;
+                String argumentString = string.Empty;
+                argumentString = JsonConvert.SerializeObject(arguments);
+                HttpWebRequest
+                    request = WebRequest.CreateHttp("http://" + server.DomainNmaeOrIp + "/" +
+                                                    location); // + "?apikey=" + apiKey);
+                request.Method = "POST";
+                request.Headers["X-Api-Key"] = server.ApplicationKey;
+                request.ContentType = "application/json";
+                using (var streamWriter = new StreamWriter(request.GetRequestStream()))
+                {
+                    streamWriter.Write(argumentString);
+                }
 
-            using (var streamReader = new StreamReader(httpResponse.GetResponseStream()))
-            {
-                strResponseValue = streamReader.ReadToEnd();
+                HttpWebResponse httpResponse;
+                httpResponse = (HttpWebResponse) request.GetResponse();
+
+                using (var streamReader = new StreamReader(httpResponse.GetResponseStream()))
+                {
+                    strResponseValue = streamReader.ReadToEnd();
+                }
+
+                return strResponseValue;
             }
-            return strResponseValue;
+            catch (WebException e)
+            {
+                string msg =
+                    "The Octoprint environment was not set up correctly. Consider checking that Octoprint is already running " +
+                    "on the URl+port number indicated in the appsettings.json file under the tag 'Octoprint'. \n " +
+                    "Also check if the API key under the same tag is valid. \n" +
+                    $"Exception message: {e.Message} ";
+
+                Console.WriteLine(msg);
+                throw;
+            }
         }
 
         /// <summary>
