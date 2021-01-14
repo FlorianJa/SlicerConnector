@@ -1,7 +1,10 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Runtime;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -112,11 +115,36 @@ namespace SlicingBroker
                 return;
 
             var fileSize = new FileInfo(slicedFilePath).Length;
-            if (fileSize==0)
+            if (fileSize == 0)
                 return;
 
+            StoreSlicingProfile(slicedFilePath, commands);
+
+            OnFileSliced(slicedFilePath);
+        }
+
+        public void OnFileSliced(string slicedFilePath)
+        {
             FileSliced?.Invoke(this,
                 new FileSlicedArgs(slicedFilePath));
+        }
+
+        private void StoreSlicingProfile(string slicedFilePath, PrusaSlicerCLICommands commands)
+        {
+            string tempfile = Path.GetTempFileName();
+            string jsonString = JsonSerializer.Serialize(commands);
+            string profileLine = "; SlicingProfileJson: " + jsonString;
+
+            using (var writer = new StreamWriter(tempfile))
+            using (var reader = new StreamReader(slicedFilePath))
+            {
+                writer.WriteLine(profileLine);
+                while (!reader.EndOfStream)
+                    writer.WriteLine(reader.ReadLine());
+            }
+            File.Copy(tempfile, slicedFilePath, true);
+            File.Delete(tempfile);
+
         }
 
         private void OutputDataReceived(DataReceivedEventArgs args)
@@ -124,5 +152,35 @@ namespace SlicingBroker
             DataReceived?.Invoke(this, args);
         }
 
+        public static bool Slicing_Profile_Exists(string slicingPath, PrusaSlicerCLICommands original, out string foundGcodePath)
+        {
+            foundGcodePath = "";
+
+            var gcodeName = Path.Combine(slicingPath, Path.GetFileNameWithoutExtension(original.File) + ".gcode");
+            if (!File.Exists(gcodeName))
+                return false;
+
+            var line1 = File.ReadLines(gcodeName).First();
+            string searchString = "; SlicingProfileJson: ";
+            if (!line1.StartsWith(searchString))
+                return false;
+
+            else
+            {
+               var jsonProfile= line1.Substring(searchString.Length);
+               PrusaSlicerCLICommands found = JsonSerializer.Deserialize<PrusaSlicerCLICommands>(jsonProfile);
+
+                if (original.LayerHeight != found.LayerHeight)
+                    return false;
+                if (original.SupportMaterial != found.SupportMaterial)
+                    return false;
+                if (original.FillDensity != found.FillDensity)
+                    return false;
+                
+                foundGcodePath = gcodeName;
+                return true;
+            }
+
+        }
     }
 }

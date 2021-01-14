@@ -118,20 +118,30 @@ namespace SlicerConnector
 
         private void SliceWithDefaultParameters(string inputFile)
         {
-            Task.Run(async () =>
+            PrusaSlicerCLICommands commands = PrusaSlicerCLICommands.Default;
+            commands.Output = GCodePath;
+            if (!Directory.Exists(commands.Output))
             {
-                PrusaSlicerCLICommands commands = PrusaSlicerCLICommands.Default;
-                commands.Output = GCodePath;
-                if (!Directory.Exists(commands.Output))
-                {
-                    Directory.CreateDirectory(commands.Output);
-                }
+                Directory.CreateDirectory(commands.Output);
+            }
+            commands.File = inputFile;
 
-                commands.File = inputFile;
-                var prusaSlicerBroker = new PrusaSlicerBroker(slicerPath);
-                prusaSlicerBroker.FileSliced += PrusaSlicerBroker_FileSliced;
-                await prusaSlicerBroker.SliceAsync(commands);
-            });
+            // if the same gcode was already found raise the filesliced event with that gcode file
+            if (PrusaSlicerBroker.Slicing_Profile_Exists(GCodePath, commands, out string foundGcodePath))
+                PrusaSlicerBroker_FileSliced(commands, new FileSlicedArgs(foundGcodePath));
+            //if nothing was not found then slice the model and generate new gcode
+            else
+            {
+                Task.Run(async () =>
+                {
+
+                    var prusaSlicerBroker = new PrusaSlicerBroker(slicerPath);
+                    prusaSlicerBroker.FileSliced += PrusaSlicerBroker_FileSliced;
+                    await prusaSlicerBroker.SliceAsync(commands);
+                });
+            }
+
+
         }
 
         private async void PrusaSlicerBroker_FileSliced(object sender, FileSlicedArgs e)
@@ -260,16 +270,14 @@ namespace SlicerConnector
                         }
                         else
                         {
-                            commands.File = localPath;
-                            await prusaSlicerBroker.SliceAsync(commands);
+                            await SliceFile(webSocket, commands, localPath, prusaSlicerBroker);
                         }
 
                     }
                     // use the local file on the disk
                     else
                     {
-                        commands.File = localPath;
-                        await prusaSlicerBroker.SliceAsync(commands);
+                        await SliceFile(webSocket, commands, localPath, prusaSlicerBroker);
                     }
                 }
 
@@ -278,6 +286,21 @@ namespace SlicerConnector
 
             await webSocket.CloseAsync(result.CloseStatus.Value, result.CloseStatusDescription, CancellationToken.None);
         }
+
+        private async Task SliceFile(WebSocket webSocket, PrusaSlicerCLICommands commands, string localPath,
+            PrusaSlicerBroker prusaSlicerBroker)
+        {
+            commands.File = localPath;
+            if (PrusaSlicerBroker.Slicing_Profile_Exists(GCodePath, commands, out string foundGcodePath))
+                PrusaSlicerBroker_FileSliced(webSocket).Invoke(commands, new FileSlicedArgs(foundGcodePath));
+
+            else
+            {
+                await prusaSlicerBroker.SliceAsync(commands);
+            }
+        }
+
+       
 
         private EventHandler<FileSlicedArgs> PrusaSlicerBroker_FileSliced(WebSocket websocket)
         {
